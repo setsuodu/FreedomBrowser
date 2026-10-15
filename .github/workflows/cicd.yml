@@ -4,7 +4,7 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:          # 仍然支持手动跑
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -47,14 +47,13 @@ jobs:
           echo "path=$APK" >> $GITHUB_OUTPUT
           ls -lh "$APK"
 
-      # 1. Artifact（调试用）
-      - uses: actions/upload-artifact@v4
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
         with:
           name: webview-release-apk
           path: ${{ steps.apk.outputs.path }}
           retention-days: 14
 
-      # 2. 挂到 GitHub Release（只有 tag 时才跑）
       - name: GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -62,19 +61,25 @@ jobs:
           files: ${{ steps.apk.outputs.path }}
           generate_release_notes: true
 
-      # 3. 上传到 Fenfa（有 secret 就传，没有就跳过）
       - name: Upload to Fenfa
-        if: ${{ secrets.FENFA_UPLOAD_URL != '' }}
         env:
           FENFA_UPLOAD_URL: ${{ secrets.FENFA_UPLOAD_URL }}
           FENFA_UPLOAD_TOKEN: ${{ secrets.FENFA_UPLOAD_TOKEN }}
           FENFA_VARIANT_ID: ${{ secrets.FENFA_VARIANT_ID }}
         run: |
           set -e
+
+          if [ -z "$FENFA_UPLOAD_URL" ] || [ -z "$FENFA_UPLOAD_TOKEN" ] || [ -z "$FENFA_VARIANT_ID" ]; then
+            echo "⚠️ Fenfa secrets 未配置，跳过上传"
+            exit 0
+          fi
+
           APK="${{ steps.apk.outputs.path }}"
           TAG="${{ github.ref_name }}"
           VERSION=$(echo "$TAG" | sed -E 's/^v//')
           CHANGELOG="Release $TAG"
+
+          echo "Uploading $APK (version=$VERSION) to Fenfa..."
 
           RESP=$(curl -s -w "\n%{http_code}" -X POST "$FENFA_UPLOAD_URL" \
             -H "X-Auth-Token: $FENFA_UPLOAD_TOKEN" \
@@ -85,10 +90,13 @@ jobs:
 
           HTTP_CODE=$(echo "$RESP" | tail -n1)
           BODY=$(echo "$RESP" | sed '$d')
+
           echo "HTTP $HTTP_CODE"
           echo "$BODY"
+
           if [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "200" ]; then
-            echo "Fenfa upload failed"
+            echo "❌ Fenfa upload failed"
             exit 1
           fi
+
           echo "✅ Uploaded to Fenfa"
