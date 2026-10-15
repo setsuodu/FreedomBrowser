@@ -6,6 +6,9 @@ on:
       - 'v*'
   workflow_dispatch:     # 允许手动触发
 
+permissions:
+  contents: write   # 必须，否则没法创建/更新 Release
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -40,13 +43,38 @@ jobs:
           fi
           ./gradlew assembleRelease --stacktrace --no-daemon
           echo "=== APK files ==="
-          find app/build/outputs/apk -name "*.apk" -type f || find . -name "*.apk" -type f
+          find app/build/outputs/apk -name "*.apk" -type f
 
+      - name: Find APK
+        id: apk
+        run: |
+          APK=$(find app/build/outputs/apk -name "*release*.apk" -type f | head -n 1)
+          if [ -z "$APK" ]; then
+            APK=$(find app/build/outputs/apk -name "*.apk" -type f | head -n 1)
+          fi
+          if [ -z "$APK" ]; then
+            echo "No APK found!"
+            exit 1
+          fi
+          echo "path=$APK" >> $GITHUB_OUTPUT
+          echo "Found: $APK"
+          ls -lh "$APK"
+
+      # 仍然保留 artifact（方便调试）
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: webview-release-apk
-          path: |
-            app/build/outputs/apk/**/*.apk
+          path: ${{ steps.apk.outputs.path }}
           if-no-files-found: error
           retention-days: 14
+
+      # 关键步骤：把 APK 挂到 GitHub Release
+      - name: Create / Update GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: ${{ steps.apk.outputs.path }}
+          generate_release_notes: true
+          # 如果想强制覆盖同名文件，可以加：
+          # fail_on_unmatched_files: true
