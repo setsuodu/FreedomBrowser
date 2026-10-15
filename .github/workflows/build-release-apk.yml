@@ -1,15 +1,14 @@
-name: Build APK & Upload to Fenfa
+name: Build Release APK
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main, master]
+  pull_request:
   workflow_dispatch:
 
 jobs:
-  build-and-upload:
+  build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
 
     steps:
       - name: Checkout
@@ -21,7 +20,7 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # 2026/09 后 tools 包已下架，必须用 v4 + 明确指定 packages
+      # 2026/09 后 tools 包已下架，必须用 v4 + 明确 packages
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
@@ -43,61 +42,11 @@ jobs:
           echo "=== APK files ==="
           find app/build/outputs/apk -name "*.apk" -type f || find . -name "*.apk" -type f
 
-      - name: Find APK path
-        id: apk
-        run: |
-          APK=$(find app/build/outputs/apk -name "*release*.apk" -type f | head -n 1)
-          if [ -z "$APK" ]; then
-            APK=$(find app/build/outputs/apk -name "*.apk" -type f | head -n 1)
-          fi
-          if [ -z "$APK" ]; then
-            APK=$(find . -name "*.apk" -type f | head -n 1)
-          fi
-          echo "path=$APK" >> $GITHUB_OUTPUT
-          echo "Found APK: $APK"
-          ls -lh "$APK"
-
-      - name: Extract version
-        id: ver
-        run: |
-          TAG="${{ github.event.release.tag_name || github.ref_name }}"
-          VERSION=$(echo "$TAG" | sed -E 's/.*(v?[0-9]+\.[0-9]+\.[0-9]+).*/\1/' | sed 's/^v//')
-          if [ -z "$VERSION" ] || [ "$VERSION" = "$TAG" ]; then
-            VERSION=$(grep -oP 'versionName\s*=\s*"\K[^"]+' app/build.gradle.kts 2>/dev/null || \
-                      grep -oP 'versionName\s+"\K[^"]+' app/build.gradle 2>/dev/null || \
-                      echo "0.0.0")
-          fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION"
-
-      - name: Upload to Fenfa
-        env:
-          FENFA_UPLOAD_URL: ${{ secrets.FENFA_UPLOAD_URL }}
-          FENFA_UPLOAD_TOKEN: ${{ secrets.FENFA_UPLOAD_TOKEN }}
-          FENFA_VARIANT_ID: ${{ secrets.FENFA_VARIANT_ID }}
-        run: |
-          set -e
-          APK="${{ steps.apk.outputs.path }}"
-          VERSION="${{ steps.ver.outputs.version }}"
-          CHANGELOG="${{ github.event.release.body || 'Release from GitHub Actions' }}"
-
-          echo "Uploading $APK (version=$VERSION) ..."
-
-          RESP=$(curl -s -w "\n%{http_code}" -X POST "$FENFA_UPLOAD_URL" \
-            -H "X-Auth-Token: $FENFA_UPLOAD_TOKEN" \
-            -F "variant_id=$FENFA_VARIANT_ID" \
-            -F "app_file=@$APK" \
-            -F "version=$VERSION" \
-            -F "changelog=$CHANGELOG")
-
-          HTTP_CODE=$(echo "$RESP" | tail -n1)
-          BODY=$(echo "$RESP" | sed '$d')
-
-          echo "HTTP $HTTP_CODE"
-          echo "$BODY"
-
-          if [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "200" ]; then
-            echo "Upload failed"
-            exit 1
-          fi
-          echo "✅ Uploaded successfully"
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: webview-release-apk
+          path: |
+            app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
+          retention-days: 14
