@@ -1,0 +1,97 @@
+# .github/workflows/release-to-fenfa.yml
+# 放到 setsuodu/webview_kt 仓库
+
+name: Build APK & Upload to Fenfa
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:          # 允许手动触发测试
+    inputs:
+      tag:
+        description: '要上传的 tag（留空则用最新 release）'
+        required: false
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || github.ref }}
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build Release APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon
+          # 找生成的 apk
+          find app/build/outputs/apk -name "*.apk" -type f
+
+      - name: Find APK path
+        id: apk
+        run: |
+          APK=$(find app/build/outputs/apk -name "*release*.apk" -type f | head -n 1)
+          if [ -z "$APK" ]; then
+            APK=$(find app/build/outputs/apk -name "*.apk" -type f | head -n 1)
+          fi
+          echo "path=$APK" >> $GITHUB_OUTPUT
+          echo "Found APK: $APK"
+          ls -lh "$APK"
+
+      - name: Extract version from tag / gradle
+        id: ver
+        run: |
+          TAG="${{ github.event.release.tag_name || github.ref_name }}"
+          # 去掉可能的前缀
+          VERSION=$(echo "$TAG" | sed -E 's/.*(v?[0-9]+\.[0-9]+\.[0-9]+).*/\1/' | sed 's/^v//')
+          if [ -z "$VERSION" ] || [ "$VERSION" = "$TAG" ]; then
+            VERSION=$(grep -oP 'versionName\s+"\K[^"]+' app/build.gradle.kts || echo "0.0.0")
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION"
+
+      - name: Upload to Fenfa
+        env:
+          FENFA_UPLOAD_URL: ${{ secrets.FENFA_UPLOAD_URL }}
+          FENFA_UPLOAD_TOKEN: ${{ secrets.FENFA_UPLOAD_TOKEN }}
+          FENFA_VARIANT_ID: ${{ secrets.FENFA_VARIANT_ID }}
+        run: |
+          set -e
+          APK="${{ steps.apk.outputs.path }}"
+          VERSION="${{ steps.ver.outputs.version }}"
+          CHANGELOG="${{ github.event.release.body || 'Release from GitHub Actions' }}"
+
+          echo "Uploading $APK (version=$VERSION) to Fenfa..."
+
+          RESP=$(curl -s -w "\n%{http_code}" -X POST "$FENFA_UPLOAD_URL" \
+            -H "X-Auth-Token: $FENFA_UPLOAD_TOKEN" \
+            -F "variant_id=$FENFA_VARIANT_ID" \
+            -F "app_file=@$APK" \
+            -F "version=$VERSION" \
+            -F "changelog=$CHANGELOG")
+
+          HTTP_CODE=$(echo "$RESP" | tail -n1)
+          BODY=$(echo "$RESP" | sed '$d')
+
+          echo "HTTP $HTTP_CODE"
+          echo "$BODY" | jq . || echo "$BODY"
+
+          if [ "$HTTP_CODE" != "201" ] && [ "$HTTP_CODE" != "200" ]; then
+            echo "Upload failed"
+            exit 1
+          fi
+
+          echo "✅ Uploaded successfully"
