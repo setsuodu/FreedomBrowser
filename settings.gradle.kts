@@ -22,6 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Freedom"
+rootProject.name = "FreedomBrowser"
 include(":app")
- 
