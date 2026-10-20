@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "com.setsuodu.webview"
+    namespace = "com.setsuodu.freedombrowser"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -12,7 +12,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.setsuodu.webview"
+        applicationId = "com.setsuodu.freedombrowser"
         minSdk = 24
         targetSdk = 36
         versionCode = 1
