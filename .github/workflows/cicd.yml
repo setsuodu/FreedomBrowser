@@ -50,7 +50,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: webview-release-apk
+          name: FreedomBrowser-release-apk
           path: ${{ steps.apk.outputs.path }}
           retention-days: 14
 
